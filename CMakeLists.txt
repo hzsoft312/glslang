@@ -46,7 +46,7 @@ endif()
 
 project(glslang)
 # make testing optional
-include(CTest)
+#include(CTest)
 
 if(ENABLE_AMD_EXTENSIONS)
     add_definitions(-DAMD_EXTENSIONS)
@@ -128,4 +128,4 @@ add_subdirectory(SPIRV)
 if(ENABLE_HLSL)
     add_subdirectory(hlsl)
 endif(ENABLE_HLSL)
-add_subdirectory(gtests)
+#add_subdirectory(gtests)
