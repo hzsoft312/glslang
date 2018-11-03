@@ -1,6 +1,7 @@
 add_library(OSDependent STATIC ossource.cpp ../osinclude.h)
 set_property(TARGET OSDependent PROPERTY FOLDER glslang)
 set_property(TARGET OSDependent PROPERTY POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(OSDependent PRIVATE pthread)
 
 if(ENABLE_GLSLANG_INSTALL)
     install(TARGETS OSDependent
