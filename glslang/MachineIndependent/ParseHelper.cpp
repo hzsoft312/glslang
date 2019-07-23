@@ -377,7 +377,8 @@ TIntermTyped* TParseContext::handleBracketDereference(const TSourceLoc& loc, TIn
     // basic type checks...
     variableCheck(base);
 
-    if (! base->isArray() && ! base->isMatrix() && ! base->isVector() && ! base->getType().isCoopMat()) {
+    if (! base->isArray() && ! base->isMatrix() && ! base->isVector() && ! base->getType().isCoopMat() &&
+        base->getBasicType() != EbtReference) {
         if (base->getAsSymbolNode())
             error(loc, " left of '[' is not of type array, matrix, or vector ", base->getAsSymbolNode()->getName().c_str(), "");
         else
@@ -405,6 +406,14 @@ TIntermTyped* TParseContext::handleBracketDereference(const TSourceLoc& loc, TIn
 
     // at least one of base and index is not a front-end constant variable...
     TIntermTyped* result = nullptr;
+
+    if (base->getBasicType() == EbtReference && ! base->isArray()) {
+        requireExtensions(loc, 1, &E_GL_EXT_buffer_reference2, "buffer reference indexing");
+        result = intermediate.addBinaryMath(EOpAdd, base, index, loc);
+        result->setType(base->getType());
+        return result;
+    }
+
     if (index->getQualifier().isFrontEndConstant())
         checkIndex(loc, base->getType(), indexValue);
 
@@ -1156,6 +1165,16 @@ TIntermTyped* TParseContext::handleFunctionCall(const TSourceLoc& loc, TFunction
                             error(arguments->getLoc(), message, "readonly", "");
                         if (argQualifier.writeonly && ! formalQualifier.writeonly)
                             error(arguments->getLoc(), message, "writeonly", "");
+                        // Don't check 'restrict', it is different than the rest:
+                        // "...but only restrict can be taken away from a calling argument, by a formal parameter that
+                        // lacks the restrict qualifier..."
+                    }
+                    if (!builtIn && argQualifier.layoutFormat != formalQualifier.layoutFormat) {
+                        // we have mismatched formats, which should only be allowed if writeonly
+                        // and at least one format is unknown
+                        if (!formalQualifier.writeonly || (formalQualifier.layoutFormat != ElfNone &&
+                                                              argQualifier.layoutFormat != ElfNone))
+                            error(arguments->getLoc(), "image formats must match", "format", "");
                     }
 
                     if (builtIn && arg->getAsTyped()->getType().containsBasicType(EbtFloat16))
@@ -1392,6 +1411,44 @@ void TParseContext::checkLocation(const TSourceLoc& loc, TOperator op)
                 error(loc, "tessellation control barrier() cannot be placed after a return from main()", "", "");
         }
         break;
+    case EOpBeginInvocationInterlock:
+        if (language != EShLangFragment)
+            error(loc, "beginInvocationInterlockARB() must be in a fragment shader", "", "");
+        if (! inMain)
+            error(loc, "beginInvocationInterlockARB() must be in main()", "", "");
+        else if (postEntryPointReturn)
+            error(loc, "beginInvocationInterlockARB() cannot be placed after a return from main()", "", "");
+        if (controlFlowNestingLevel > 0)
+            error(loc, "beginInvocationInterlockARB() cannot be placed within flow control", "", "");
+
+        if (beginInvocationInterlockCount > 0)
+            error(loc, "beginInvocationInterlockARB() must only be called once", "", "");
+        if (endInvocationInterlockCount > 0)
+            error(loc, "beginInvocationInterlockARB() must be called before endInvocationInterlockARB()", "", "");
+
+        beginInvocationInterlockCount++;
+
+        // default to pixel_interlock_ordered
+        if (intermediate.getInterlockOrdering() == EioNone)
+            intermediate.setInterlockOrdering(EioPixelInterlockOrdered);
+        break;
+    case EOpEndInvocationInterlock:
+        if (language != EShLangFragment)
+            error(loc, "endInvocationInterlockARB() must be in a fragment shader", "", "");
+        if (! inMain)
+            error(loc, "endInvocationInterlockARB() must be in main()", "", "");
+        else if (postEntryPointReturn)
+            error(loc, "endInvocationInterlockARB() cannot be placed after a return from main()", "", "");
+        if (controlFlowNestingLevel > 0)
+            error(loc, "endInvocationInterlockARB() cannot be placed within flow control", "", "");
+
+        if (endInvocationInterlockCount > 0)
+            error(loc, "endInvocationInterlockARB() must only be called once", "", "");
+        if (beginInvocationInterlockCount == 0)
+            error(loc, "beginInvocationInterlockARB() must be called before endInvocationInterlockARB()", "", "");
+
+        endInvocationInterlockCount++;
+        break;
     default:
         break;
     }
@@ -1584,6 +1641,7 @@ void TParseContext::memorySemanticsCheck(const TSourceLoc& loc, const TFunction&
     const int gl_SemanticsAcquireRelease  = 0x8;
     const int gl_SemanticsMakeAvailable   = 0x2000;
     const int gl_SemanticsMakeVisible     = 0x4000;
+    const int gl_SemanticsVolatile        = 0x8000;
 
     //const int gl_StorageSemanticsNone     = 0x0;
     const int gl_StorageSemanticsBuffer   = 0x40;
@@ -1673,7 +1731,8 @@ void TParseContext::memorySemanticsCheck(const TSourceLoc& loc, const TFunction&
                                       gl_SemanticsRelease |
                                       gl_SemanticsAcquireRelease |
                                       gl_SemanticsMakeAvailable |
-                                      gl_SemanticsMakeVisible))) {
+                                      gl_SemanticsMakeVisible |
+                                      gl_SemanticsVolatile))) {
         error(loc, "Invalid semantics value", fnCandidate.getName().c_str(), "");
     }
     if (((storageClassSemantics | storageClassSemantics2) & ~(gl_StorageSemanticsBuffer |
@@ -1725,7 +1784,16 @@ void TParseContext::memorySemanticsCheck(const TSourceLoc& loc, const TFunction&
         error(loc, "gl_SemanticsMakeVisible requires gl_SemanticsAcquire or gl_SemanticsAcquireRelease",
               fnCandidate.getName().c_str(), "");
     }
-
+    if ((semantics & gl_SemanticsVolatile) &&
+        (callNode.getOp() == EOpMemoryBarrier || callNode.getOp() == EOpBarrier)) {
+        error(loc, "gl_SemanticsVolatile must not be used with memoryBarrier or controlBarrier",
+              fnCandidate.getName().c_str(), "");
+    }
+    if ((callNode.getOp() == EOpAtomicCompSwap || callNode.getOp() == EOpImageAtomicCompSwap) &&
+        ((semantics ^ semantics2) & gl_SemanticsVolatile)) {
+        error(loc, "semEqual and semUnequal must either both include gl_SemanticsVolatile or neither",
+              fnCandidate.getName().c_str(), "");
+    }
 }
 
 
@@ -3876,7 +3944,10 @@ void TParseContext::checkRuntimeSizable(const TSourceLoc& loc, const TIntermType
 
     // check for additional things allowed by GL_EXT_nonuniform_qualifier
     if (base.getBasicType() == EbtSampler ||
-            (base.getBasicType() == EbtBlock && base.getType().getQualifier().isUniformOrBuffer()))
+#ifdef NV_EXTENSIONS
+        base.getBasicType() == EbtAccStructNV ||
+#endif
+        (base.getBasicType() == EbtBlock && base.getType().getQualifier().isUniformOrBuffer()))
         requireExtensions(loc, 1, &E_GL_EXT_nonuniform_qualifier, "variable index");
     else
         error(loc, "", "[", "array must be redeclared with a size before being indexed with a variable");
@@ -3905,23 +3976,30 @@ bool TParseContext::isRuntimeLength(const TIntermTyped& base) const
 }
 
 #ifdef NV_EXTENSIONS
-// Fix mesh view output array dimension
-void TParseContext::resizeMeshViewDimension(const TSourceLoc& loc, TType& type)
+// Check if mesh perviewNV attributes have a view dimension
+// and resize it to gl_MaxMeshViewCountNV when implicitly sized.
+void TParseContext::checkAndResizeMeshViewDim(const TSourceLoc& loc, TType& type, bool isBlockMember)
 {
     // see if member is a per-view attribute
-    if (type.getQualifier().isPerView()) {
-        // since we don't have the maxMeshViewCountNV set during parsing builtins, we hardcode the value
-        int maxViewCount = parsingBuiltins ? 4 : resources.maxMeshViewCountNV;
+    if (!type.getQualifier().isPerView())
+        return;
 
-        if (! type.isArray()) {
-            error(loc, "requires an view array dimension", "perviewNV", "");
-        }
-        else if (!type.isUnsizedArray() && type.getOuterArraySize() != maxViewCount) {
+    if ((isBlockMember && type.isArray()) || (!isBlockMember && type.isArrayOfArrays())) {
+        // since we don't have the maxMeshViewCountNV set during parsing builtins, we hardcode the value.
+        int maxViewCount = parsingBuiltins ? 4 : resources.maxMeshViewCountNV;
+        // For block members, outermost array dimension is the view dimension.
+        // For non-block members, outermost array dimension is the vertex/primitive dimension
+        // and 2nd outermost is the view dimension.
+        int viewDim = isBlockMember ? 0 : 1;
+        int viewDimSize = type.getArraySizes()->getDimSize(viewDim);
+
+        if (viewDimSize != UnsizedArraySize && viewDimSize != maxViewCount)
             error(loc, "mesh view output array size must be gl_MaxMeshViewCountNV or implicitly sized", "[]", "");
-        }
-        else if (type.isUnsizedArray()) {
-            type.changeOuterArraySize(maxViewCount);
-        }
+        else if (viewDimSize == UnsizedArraySize)
+            type.getArraySizes()->setDimSize(viewDim, maxViewCount);
+    }
+    else {
+        error(loc, "requires a view array dimension", "perviewNV", "");
     }
 }
 #endif
@@ -4924,6 +5002,19 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
                 return;
             }
         }
+        for (TInterlockOrdering order = (TInterlockOrdering)(EioNone + 1); order < EioCount; order = (TInterlockOrdering)(order+1)) {
+            if (id == TQualifier::getInterlockOrderingString(order)) {
+                requireProfile(loc, ECoreProfile | ECompatibilityProfile, "fragment shader interlock layout qualifier");
+                profileRequires(loc, ECoreProfile | ECompatibilityProfile, 450, nullptr, "fragment shader interlock layout qualifier");
+                requireExtensions(loc, 1, &E_GL_ARB_fragment_shader_interlock, TQualifier::getInterlockOrderingString(order));
+#ifdef NV_EXTENSIONS
+                if (order == EioShadingRateInterlockOrdered || order == EioShadingRateInterlockUnordered)
+                    requireExtensions(loc, 1, &E_GL_NV_shading_rate_image, TQualifier::getInterlockOrderingString(order));
+#endif
+                publicType.shaderQualifiers.interlockOrdering = order;
+                return;
+            }
+        }
         if (id.compare(0, 13, "blend_support") == 0) {
             bool found = false;
             for (TBlendEquationShift be = (TBlendEquationShift)0; be < EBlendCount; be = (TBlendEquationShift)(be + 1)) {
@@ -4994,6 +5085,7 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
     integerCheck(node, feature);
     const TIntermConstantUnion* constUnion = node->getAsConstantUnion();
     int value;
+    bool nonLiteral = false;
     if (constUnion) {
         value = constUnion->getConstArray()[0].getIConst();
         if (! constUnion->isLiteral()) {
@@ -5003,6 +5095,7 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
     } else {
         // grammar should have give out the error message
         value = 0;
+        nonLiteral = true;
     }
 
     if (value < 0) {
@@ -5024,6 +5117,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             profileRequires(loc, EEsProfile, 310, nullptr, feature);
         }
         publicType.qualifier.layoutOffset = value;
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "offset", "");
         return;
     } else if (id == "align") {
         const char* feature = "uniform buffer-member align";
@@ -5036,6 +5131,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             error(loc, "must be a power of 2", "align", "");
         else
             publicType.qualifier.layoutAlign = value;
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "align", "");
         return;
     } else if (id == "location") {
         profileRequires(loc, EEsProfile, 300, nullptr, "location");
@@ -5045,6 +5142,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             error(loc, "location is too large", id.c_str(), "");
         else
             publicType.qualifier.layoutLocation = value;
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "location", "");
         return;
     } else if (id == "set") {
         if ((unsigned int)value >= TQualifier::layoutSetEnd)
@@ -5053,6 +5152,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             publicType.qualifier.layoutSet = value;
         if (value != 0)
             requireVulkan(loc, "descriptor set");
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "set", "");
         return;
     } else if (id == "binding") {
         profileRequires(loc, ~EEsProfile, 420, E_GL_ARB_shading_language_420pack, "binding");
@@ -5061,6 +5162,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             error(loc, "binding is too large", id.c_str(), "");
         else
             publicType.qualifier.layoutBinding = value;
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "binding", "");
         return;
     } else if (id == "component") {
         requireProfile(loc, ECoreProfile | ECompatibilityProfile, "component");
@@ -5069,6 +5172,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             error(loc, "component is too large", id.c_str(), "");
         else
             publicType.qualifier.layoutComponent = value;
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "component", "");
         return;
     } else if (id.compare(0, 4, "xfb_") == 0) {
         // "Any shader making any static use (after preprocessing) of any of these
@@ -5089,12 +5194,16 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
                 error(loc, "buffer is too large:", id.c_str(), "internal max is %d", TQualifier::layoutXfbBufferEnd-1);
             else
                 publicType.qualifier.layoutXfbBuffer = value;
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "xfb_buffer", "");
             return;
         } else if (id == "xfb_offset") {
             if (value >= (int)TQualifier::layoutXfbOffsetEnd)
                 error(loc, "offset is too large:", id.c_str(), "internal max is %d", TQualifier::layoutXfbOffsetEnd-1);
             else
                 publicType.qualifier.layoutXfbOffset = value;
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "xfb_offset", "");
             return;
         } else if (id == "xfb_stride") {
             // "The resulting stride (implicit or explicit), when divided by 4, must be less than or equal to the
@@ -5107,6 +5216,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
                 error(loc, "stride is too large:", id.c_str(), "internal max is %d", TQualifier::layoutXfbStrideEnd-1);
             else
                 publicType.qualifier.layoutXfbStride = value;
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "xfb_stride", "");
             return;
         }
     }
@@ -5117,6 +5228,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             error(loc, "attachment index is too large", id.c_str(), "");
         else
             publicType.qualifier.layoutAttachment = value;
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "input_attachment_index", "");
         return;
     }
     if (id == "constant_id") {
@@ -5129,11 +5242,15 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             if (! intermediate.addUsedConstantId(value))
                 error(loc, "specialization-constant id already used", id.c_str(), "");
         }
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "constant_id", "");
         return;
     }
     if (id == "num_views") {
         requireExtensions(loc, Num_OVR_multiview_EXTs, OVR_multiview_EXTs, "num_views");
         publicType.shaderQualifiers.numViews = value;
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "num_views", "");
         return;
     }
 
@@ -5145,6 +5262,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
         if (id == "secondary_view_offset") {
             requireExtensions(loc, 1, &E_GL_NV_stereo_view_rendering, "stereo view rendering");
             publicType.qualifier.layoutSecondaryViewportRelativeOffset = value;
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "secondary_view_offset", "");
             return;
         }
     }
@@ -5156,6 +5275,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             error(loc, "must be a power of 2", "buffer_reference_align", "");
         else
             publicType.qualifier.layoutBufferReferenceAlign = (unsigned int)std::log2(value);
+        if (nonLiteral)
+            error(loc, "needs a literal integer", "buffer_reference_align", "");
         return;
     }
 
@@ -5169,6 +5290,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
                 error(loc, "must be greater than 0", "vertices", "");
             else
                 publicType.shaderQualifiers.vertices = value;
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "vertices", "");
             return;
         }
         break;
@@ -5183,12 +5306,16 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
                 error(loc, "must be at least 1", "invocations", "");
             else
                 publicType.shaderQualifiers.invocations = value;
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "invocations", "");
             return;
         }
         if (id == "max_vertices") {
             publicType.shaderQualifiers.vertices = value;
             if (value > resources.maxGeometryOutputVertices)
                 error(loc, "too large, must be less than gl_MaxGeometryOutputVertices", "max_vertices", "");
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "max_vertices", "");
             return;
         }
         if (id == "stream") {
@@ -5196,6 +5323,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             publicType.qualifier.layoutStream = value;
             if (value > 0)
                 intermediate.setMultiStream();
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "stream", "");
             return;
         }
         break;
@@ -5213,6 +5342,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             }
 
             publicType.qualifier.layoutIndex = value;
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "index", "");
             return;
         }
         break;
@@ -5224,6 +5355,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             publicType.shaderQualifiers.vertices = value;
             if (value > resources.maxMeshOutputVerticesNV)
                 error(loc, "too large, must be less than gl_MaxMeshOutputVerticesNV", "max_vertices", "");
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "max_vertices", "");
             return;
         }
         if (id == "max_primitives") {
@@ -5231,6 +5364,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
             publicType.shaderQualifiers.primitives = value;
             if (value > resources.maxMeshOutputPrimitivesNV)
                 error(loc, "too large, must be less than gl_MaxMeshOutputPrimitivesNV", "max_primitives", "");
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "max_primitives", "");
             return;
         }
         // Fall through
@@ -5250,6 +5385,8 @@ void TParseContext::setLayoutQualifier(const TSourceLoc& loc, TPublicType& publi
                 profileRequires(loc, EEsProfile, 310, 0, "gl_WorkGroupSize");
                 profileRequires(loc, ~EEsProfile, 430, E_GL_ARB_compute_shader, "gl_WorkGroupSize");
             }
+            if (nonLiteral)
+                error(loc, "needs a literal integer", "local_size", "");
             if (id.size() == 12 && value == 0) {
                 error(loc, "must be at least 1", id.c_str(), "");
                 return;
@@ -5878,6 +6015,8 @@ void TParseContext::checkNoShaderLayouts(const TSourceLoc& loc, const TShaderQua
         error(loc, message, "blend equation", "");
     if (shaderQualifiers.numViews != TQualifier::layoutNotSet)
         error(loc, message, "num_views", "");
+    if (shaderQualifiers.interlockOrdering != EioNone)
+        error(loc, message, TQualifier::getInterlockOrderingString(shaderQualifiers.interlockOrdering), "");
 }
 
 // Correct and/or advance an object's offset layout qualifier.
@@ -6295,6 +6434,7 @@ TIntermNode* TParseContext::declareVariable(const TSourceLoc& loc, TString& iden
     transparentOpaqueCheck(loc, type, identifier);
 #ifdef NV_EXTENSIONS
     accStructNVCheck(loc, type, identifier);
+    checkAndResizeMeshViewDim(loc, type, /*isBlockMember*/ false);
 #endif
     if (type.getQualifier().storage == EvqConst && type.containsBasicType(EbtReference)) {
         error(loc, "variables with reference type can't have qualifier 'const'", "qualifier", "");
@@ -6816,6 +6956,16 @@ TIntermTyped* TParseContext::constructBuiltIn(const TType& type, TOperator op, T
     case EOpConstructF16Mat4x4:
     case EOpConstructFloat16:
         basicOp = EOpConstructFloat16;
+        // 8/16-bit storage extensions don't support constructing composites of 8/16-bit types,
+        // so construct a 32-bit type and convert
+        if (!intermediate.getArithemeticFloat16Enabled()) {
+            TType tempType(EbtFloat, EvqTemporary, type.getVectorSize());
+            newNode = node;
+            if (tempType != newNode->getType())
+                newNode = intermediate.setAggregateOperator(newNode, (TOperator)(EOpConstructVec2 + op - EOpConstructF16Vec2), tempType, node->getLoc());
+            newNode = intermediate.addConversion(EbtFloat16, newNode);
+            return newNode;
+        }
         break;
 
     case EOpConstructI8Vec2:
@@ -6823,6 +6973,16 @@ TIntermTyped* TParseContext::constructBuiltIn(const TType& type, TOperator op, T
     case EOpConstructI8Vec4:
     case EOpConstructInt8:
         basicOp = EOpConstructInt8;
+        // 8/16-bit storage extensions don't support constructing composites of 8/16-bit types,
+        // so construct a 32-bit type and convert
+        if (!intermediate.getArithemeticInt8Enabled()) {
+            TType tempType(EbtInt, EvqTemporary, type.getVectorSize());
+            newNode = node;
+            if (tempType != newNode->getType())
+                newNode = intermediate.setAggregateOperator(newNode, (TOperator)(EOpConstructIVec2 + op - EOpConstructI8Vec2), tempType, node->getLoc());
+            newNode = intermediate.addConversion(EbtInt8, newNode);
+            return newNode;
+        }
         break;
 
     case EOpConstructU8Vec2:
@@ -6830,6 +6990,16 @@ TIntermTyped* TParseContext::constructBuiltIn(const TType& type, TOperator op, T
     case EOpConstructU8Vec4:
     case EOpConstructUint8:
         basicOp = EOpConstructUint8;
+        // 8/16-bit storage extensions don't support constructing composites of 8/16-bit types,
+        // so construct a 32-bit type and convert
+        if (!intermediate.getArithemeticInt8Enabled()) {
+            TType tempType(EbtUint, EvqTemporary, type.getVectorSize());
+            newNode = node;
+            if (tempType != newNode->getType())
+                newNode = intermediate.setAggregateOperator(newNode, (TOperator)(EOpConstructUVec2 + op - EOpConstructU8Vec2), tempType, node->getLoc());
+            newNode = intermediate.addConversion(EbtUint8, newNode);
+            return newNode;
+        }
         break;
 
     case EOpConstructI16Vec2:
@@ -6837,6 +7007,16 @@ TIntermTyped* TParseContext::constructBuiltIn(const TType& type, TOperator op, T
     case EOpConstructI16Vec4:
     case EOpConstructInt16:
         basicOp = EOpConstructInt16;
+        // 8/16-bit storage extensions don't support constructing composites of 8/16-bit types,
+        // so construct a 32-bit type and convert
+        if (!intermediate.getArithemeticInt16Enabled()) {
+            TType tempType(EbtInt, EvqTemporary, type.getVectorSize());
+            newNode = node;
+            if (tempType != newNode->getType())
+                newNode = intermediate.setAggregateOperator(newNode, (TOperator)(EOpConstructIVec2 + op - EOpConstructI16Vec2), tempType, node->getLoc());
+            newNode = intermediate.addConversion(EbtInt16, newNode);
+            return newNode;
+        }
         break;
 
     case EOpConstructU16Vec2:
@@ -6844,6 +7024,16 @@ TIntermTyped* TParseContext::constructBuiltIn(const TType& type, TOperator op, T
     case EOpConstructU16Vec4:
     case EOpConstructUint16:
         basicOp = EOpConstructUint16;
+        // 8/16-bit storage extensions don't support constructing composites of 8/16-bit types,
+        // so construct a 32-bit type and convert
+        if (!intermediate.getArithemeticInt16Enabled()) {
+            TType tempType(EbtUint, EvqTemporary, type.getVectorSize());
+            newNode = node;
+            if (tempType != newNode->getType())
+                newNode = intermediate.setAggregateOperator(newNode, (TOperator)(EOpConstructUVec2 + op - EOpConstructU16Vec2), tempType, node->getLoc());
+            newNode = intermediate.addConversion(EbtUint16, newNode);
+            return newNode;
+        }
         break;
 
     case EOpConstructIVec2:
@@ -6887,9 +7077,10 @@ TIntermTyped* TParseContext::constructBuiltIn(const TType& type, TOperator op, T
         break;
 
     case EOpConstructNonuniform:
-        node->getWritableType().getQualifier().nonUniform = true;
-        return node;
-        break;
+        // Make a nonuniform copy of node
+        newNode = intermediate.addBuiltInFunctionCall(node->getLoc(), EOpCopyObject, true, node, node->getType());
+        newNode->getWritableType().getQualifier().nonUniform = true;
+        return newNode;
 
     case EOpConstructReference:
         // construct reference from reference
@@ -7159,7 +7350,7 @@ void TParseContext::declareBlock(const TSourceLoc& loc, TTypeList& typeList, con
 #ifdef NV_EXTENSIONS
     if (memberWithPerViewQualifier) {
         for (unsigned int member = 0; member < typeList.size(); ++member) {
-            resizeMeshViewDimension(typeList[member].loc, *typeList[member].type);
+            checkAndResizeMeshViewDim(typeList[member].loc, *typeList[member].type, /*isBlockMember*/ true);
         }
     }
 #endif
@@ -7805,6 +7996,14 @@ void TParseContext::updateStandaloneQualifierDefaults(const TSourceLoc& loc, con
     if (publicType.shaderQualifiers.blendEquation) {
         if (publicType.qualifier.storage != EvqVaryingOut)
             error(loc, "can only apply to 'out'", "blend equation", "");
+    }
+    if (publicType.shaderQualifiers.interlockOrdering) {
+        if (publicType.qualifier.storage == EvqVaryingIn) {
+            if (!intermediate.setInterlockOrdering(publicType.shaderQualifiers.interlockOrdering))
+                error(loc, "cannot change previously set fragment shader interlock ordering", TQualifier::getInterlockOrderingString(publicType.shaderQualifiers.interlockOrdering), "");
+        }
+        else
+            error(loc, "can only apply to 'in'", TQualifier::getInterlockOrderingString(publicType.shaderQualifiers.interlockOrdering), "");
     }
 
 #ifdef NV_EXTENSIONS

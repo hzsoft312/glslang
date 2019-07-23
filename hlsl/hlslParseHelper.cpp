@@ -816,7 +816,8 @@ TIntermTyped* HlslParseContext::handleBracketDereference(const TSourceLoc& loc, 
                   base->getAsSymbolNode()->getName().c_str(), "");
         else
             error(loc, " left of '[' is not of type array, matrix, or vector ", "expression", "");
-    } else if (base->getType().getQualifier().storage == EvqConst && index->getQualifier().storage == EvqConst) {
+    } else if (base->getType().getQualifier().isFrontEndConstant() && 
+               index->getQualifier().isFrontEndConstant()) {
         // both base and index are front-end constants
         checkIndex(loc, base->getType(), indexValue);
         return intermediate.foldDereference(base, indexValue, loc);
@@ -1899,13 +1900,16 @@ void HlslParseContext::transferTypeAttributes(const TSourceLoc& loc, const TAttr
             // location
             if (it->getInt(value))
                 type.getQualifier().layoutLocation = value;
+            else
+                error(loc, "needs a literal integer", "location", "");
             break;
         case EatBinding:
             // binding
             if (it->getInt(value)) {
                 type.getQualifier().layoutBinding = value;
                 type.getQualifier().layoutSet = 0;
-            }
+            } else
+                error(loc, "needs a literal integer", "binding", "");
             // set
             if (it->getInt(value, 1))
                 type.getQualifier().layoutSet = value;
@@ -1914,7 +1918,9 @@ void HlslParseContext::transferTypeAttributes(const TSourceLoc& loc, const TAttr
             // global cbuffer binding
             if (it->getInt(value))
                 globalUniformBinding = value;
-            // global cbuffer binding
+            else
+                error(loc, "needs a literal integer", "global binding", "");
+            // global cbuffer set
             if (it->getInt(value, 1))
                 globalUniformSet = value;
             break;
@@ -1922,6 +1928,8 @@ void HlslParseContext::transferTypeAttributes(const TSourceLoc& loc, const TAttr
             // input attachment
             if (it->getInt(value))
                 type.getQualifier().layoutAttachment = value;
+            else
+                error(loc, "needs a literal integer", "input attachment", "");
             break;
         case EatBuiltIn:
             // PointSize built-in
