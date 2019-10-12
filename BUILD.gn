@@ -167,6 +167,8 @@ source_set("glslang_sources") {
       "-Wno-sign-compare",
       "-Wno-unused-variable",
       "-Wno-missing-field-initializers",
+      "-Wno-newline-eof",
+      "-Wextra-semi",
     ]
   }
   if (is_win && !is_clang) {
