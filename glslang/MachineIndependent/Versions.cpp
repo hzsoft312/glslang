@@ -172,6 +172,7 @@ void TParseVersions::initializeExtensionBehavior()
     extensionBehavior[E_GL_ARB_tessellation_shader]          = EBhDisable;
     extensionBehavior[E_GL_ARB_enhanced_layouts]             = EBhDisable;
     extensionBehavior[E_GL_ARB_texture_cube_map_array]       = EBhDisable;
+    extensionBehavior[E_GL_ARB_texture_multisample]          = EBhDisable;
     extensionBehavior[E_GL_ARB_shader_texture_lod]           = EBhDisable;
     extensionBehavior[E_GL_ARB_explicit_attrib_location]     = EBhDisable;
     extensionBehavior[E_GL_ARB_explicit_uniform_location]    = EBhDisable;
@@ -192,6 +193,8 @@ void TParseVersions::initializeExtensionBehavior()
     extensionBehavior[E_GL_ARB_shader_viewport_layer_array]  = EBhDisable;
     extensionBehavior[E_GL_ARB_fragment_shader_interlock]    = EBhDisable;
     extensionBehavior[E_GL_ARB_shader_clock]                 = EBhDisable;
+    extensionBehavior[E_GL_ARB_uniform_buffer_object]        = EBhDisable;
+    extensionBehavior[E_GL_ARB_sample_shading]               = EBhDisable;
 
     extensionBehavior[E_GL_KHR_shader_subgroup_basic]            = EBhDisable;
     extensionBehavior[E_GL_KHR_shader_subgroup_vote]             = EBhDisable;
@@ -235,6 +238,8 @@ void TParseVersions::initializeExtensionBehavior()
     extensionBehavior[E_GL_AMD_shader_image_load_store_lod]          = EBhDisable;
     extensionBehavior[E_GL_AMD_shader_fragment_mask]                 = EBhDisable;
     extensionBehavior[E_GL_AMD_gpu_shader_half_float_fetch]          = EBhDisable;
+
+    extensionBehavior[E_GL_INTEL_shader_integer_functions2]          = EBhDisable;
 
     extensionBehavior[E_GL_NV_sample_mask_override_coverage]         = EBhDisable;
     extensionBehavior[E_SPV_NV_geometry_shader_passthrough]          = EBhDisable;
@@ -377,6 +382,7 @@ void TParseVersions::getPreamble(std::string& preamble)
             "#define GL_ARB_tessellation_shader 1\n"
             "#define GL_ARB_enhanced_layouts 1\n"
             "#define GL_ARB_texture_cube_map_array 1\n"
+            "#define GL_ARB_texture_multisample 1\n"
             "#define GL_ARB_shader_texture_lod 1\n"
             "#define GL_ARB_explicit_attrib_location 1\n"
             "#define GL_ARB_explicit_uniform_location 1\n"
@@ -392,9 +398,11 @@ void TParseVersions::getPreamble(std::string& preamble)
             "#define GL_ARB_sparse_texture2 1\n"
             "#define GL_ARB_sparse_texture_clamp 1\n"
             "#define GL_ARB_shader_stencil_export 1\n"
+            "#define GL_ARB_sample_shading 1\n"
 //            "#define GL_ARB_cull_distance 1\n"    // present for 4.5, but need extension control over block members
             "#define GL_ARB_post_depth_coverage 1\n"
             "#define GL_ARB_fragment_shader_interlock 1\n"
+            "#define GL_ARB_uniform_buffer_object 1\n"
             "#define GL_EXT_shader_non_constant_global_initializers 1\n"
             "#define GL_EXT_shader_image_load_formatted 1\n"
             "#define GL_EXT_post_depth_coverage 1\n"
@@ -433,6 +441,8 @@ void TParseVersions::getPreamble(std::string& preamble)
             "#define GL_AMD_shader_image_load_store_lod 1\n"
             "#define GL_AMD_shader_fragment_mask 1\n"
             "#define GL_AMD_gpu_shader_half_float_fetch 1\n"
+
+            "#define GL_INTEL_shader_integer_functions2 1\n"
 
             "#define GL_NV_sample_mask_override_coverage 1\n"
             "#define GL_NV_geometry_shader_passthrough 1\n"
