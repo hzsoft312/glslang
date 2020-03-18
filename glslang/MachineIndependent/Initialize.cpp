@@ -1,7 +1,7 @@
 //
 // Copyright (C) 2002-2005  3Dlabs Inc. Ltd.
 // Copyright (C) 2012-2016 LunarG, Inc.
-// Copyright (C) 2015-2018 Google, Inc.
+// Copyright (C) 2015-2020 Google, Inc.
 // Copyright (C) 2017 ARM Limited.
 //
 // All rights reserved.
@@ -690,7 +690,7 @@ void TBuiltIns::initialize(int version, EProfile profile, const SpvVersion& spvV
     //
     // double functions added to desktop 4.00, but not fma, frexp, ldexp, or pack/unpack
     //
-    if (profile != EEsProfile && version >= 400) {
+    if (profile != EEsProfile && version >= 150) {  // ARB_gpu_shader_fp64
         commonBuiltins.append(
 
             "double sqrt(double);"
@@ -1298,15 +1298,15 @@ void TBuiltIns::initialize(int version, EProfile profile, const SpvVersion& spvV
             "vec3   fma(vec3,   vec3,   vec3  );"
             "vec4   fma(vec4,   vec4,   vec4  );"
             "\n");
+    }
 
-        if (profile != EEsProfile) {
+    if (profile != EEsProfile && version >= 150) {  // ARB_gpu_shader_fp64
             commonBuiltins.append(
                 "double fma(double, double, double);"
                 "dvec2  fma(dvec2,  dvec2,  dvec2 );"
                 "dvec3  fma(dvec3,  dvec3,  dvec3 );"
                 "dvec4  fma(dvec4,  dvec4,  dvec4 );"
                 "\n");
-        }
     }
 
     if ((profile == EEsProfile && version >= 310) ||
@@ -1325,7 +1325,7 @@ void TBuiltIns::initialize(int version, EProfile profile, const SpvVersion& spvV
             "\n");
     }
 
-    if (profile != EEsProfile && version >= 400) {
+    if (profile != EEsProfile && version >= 150) { // ARB_gpu_shader_fp64
         commonBuiltins.append(
             "double frexp(double, out int);"
             "dvec2  frexp( dvec2, out ivec2);"
@@ -4067,10 +4067,10 @@ void TBuiltIns::initialize(int version, EProfile profile, const SpvVersion& spvV
     }
 #ifndef GLSLANG_WEB
     if ((profile != EEsProfile && version >= 420) || esBarrier) {
-        commonBuiltins.append(
-            "void memoryBarrierAtomicCounter();"
-            "void memoryBarrierImage();"
-            );
+        if (spvVersion.vulkan == 0) {
+            commonBuiltins.append("void memoryBarrierAtomicCounter();");
+        }
+        commonBuiltins.append("void memoryBarrierImage();");
     }
     if ((profile != EEsProfile && version >= 450) || (profile == EEsProfile && version >= 320)) {
         stageBuiltins[EShLangMeshNV].append(
@@ -4085,6 +4085,8 @@ void TBuiltIns::initialize(int version, EProfile profile, const SpvVersion& spvV
 
     commonBuiltins.append("void controlBarrier(int, int, int, int);\n"
                           "void memoryBarrier(int, int, int);\n");
+
+    commonBuiltins.append("void debugPrintfEXT();\n");
 
     if (profile != EEsProfile && version >= 450) {
         // coopMatStoreNV perhaps ought to have "out" on the buf parameter, but
@@ -6624,8 +6626,33 @@ void TBuiltIns::initialize(const TBuiltInResource &resources, int version, EProf
             }
         }
 
+        if (version >= 320) {
+            // tessellation
+
+            snprintf(builtInConstant, maxSize, "const int gl_MaxTessControlImageUniforms = %d;", resources.maxTessControlImageUniforms);
+            s.append(builtInConstant);
+            snprintf(builtInConstant, maxSize, "const int gl_MaxTessEvaluationImageUniforms = %d;", resources.maxTessEvaluationImageUniforms);
+            s.append(builtInConstant);
+            snprintf(builtInConstant, maxSize, "const int gl_MaxTessControlAtomicCounters = %d;", resources.maxTessControlAtomicCounters);
+            s.append(builtInConstant);
+            snprintf(builtInConstant, maxSize, "const int gl_MaxTessEvaluationAtomicCounters = %d;", resources.maxTessEvaluationAtomicCounters);
+            s.append(builtInConstant);
+            snprintf(builtInConstant, maxSize, "const int gl_MaxTessControlAtomicCounterBuffers = %d;", resources.maxTessControlAtomicCounterBuffers);
+            s.append(builtInConstant);
+            snprintf(builtInConstant, maxSize, "const int gl_MaxTessEvaluationAtomicCounterBuffers = %d;", resources.maxTessEvaluationAtomicCounterBuffers);
+            s.append(builtInConstant);
+        }
+
     } else {
         // non-ES profile
+
+        if (version > 400) {
+            snprintf(builtInConstant, maxSize, "const int  gl_MaxVertexUniformVectors = %d;", resources.maxVertexUniformVectors);
+            s.append(builtInConstant);
+
+            snprintf(builtInConstant, maxSize, "const int  gl_MaxFragmentUniformVectors = %d;", resources.maxFragmentUniformVectors);
+            s.append(builtInConstant);
+        }
 
         snprintf(builtInConstant, maxSize, "const int  gl_MaxVertexAttribs = %d;", resources.maxVertexAttribs);
         s.append(builtInConstant);
@@ -7878,6 +7905,7 @@ void TBuiltIns::identifyBuiltIns(int version, EProfile profile, const SpvVersion
         }
 
         symbolTable.setFunctionExtensions("controlBarrier",                 1, &E_GL_KHR_memory_scope_semantics);
+        symbolTable.setFunctionExtensions("debugPrintfEXT",                 1, &E_GL_EXT_debug_printf);
 
         // GL_ARB_shader_ballot
         if (profile != EEsProfile) {
@@ -8426,6 +8454,8 @@ void TBuiltIns::identifyBuiltIns(int version, EProfile profile, const SpvVersion
     symbolTable.relateToOperator("average",            EOpAverage);
     symbolTable.relateToOperator("averageRounded",     EOpAverageRounded);
     symbolTable.relateToOperator("multiply32x16",      EOpMul32x16);
+    symbolTable.relateToOperator("debugPrintfEXT",     EOpDebugPrintf);
+
 
     if (PureOperatorBuiltins) {
         symbolTable.relateToOperator("imageSize",               EOpImageQuerySize);

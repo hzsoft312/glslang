@@ -2,7 +2,7 @@
 // Copyright (C) 2002-2005  3Dlabs Inc. Ltd.
 // Copyright (C) 2012-2013 LunarG, Inc.
 // Copyright (C) 2017 ARM Limited.
-// Copyright (C) 2015-2018 Google, Inc.
+// Copyright (C) 2015-2020 Google, Inc.
 //
 // All rights reserved.
 //
@@ -184,6 +184,7 @@ void TParseVersions::initializeExtensionBehavior()
     extensionBehavior[E_GL_ARB_shader_texture_image_samples] = EBhDisable;
     extensionBehavior[E_GL_ARB_viewport_array]               = EBhDisable;
     extensionBehavior[E_GL_ARB_gpu_shader_int64]             = EBhDisable;
+    extensionBehavior[E_GL_ARB_gpu_shader_fp64]              = EBhDisable;
     extensionBehavior[E_GL_ARB_shader_ballot]                = EBhDisable;
     extensionBehavior[E_GL_ARB_sparse_texture2]              = EBhDisable;
     extensionBehavior[E_GL_ARB_sparse_texture_clamp]         = EBhDisable;
@@ -220,6 +221,7 @@ void TParseVersions::initializeExtensionBehavior()
     extensionBehavior[E_GL_EXT_buffer_reference2]                       = EBhDisable;
     extensionBehavior[E_GL_EXT_buffer_reference_uvec2]                  = EBhDisable;
     extensionBehavior[E_GL_EXT_demote_to_helper_invocation]             = EBhDisable;
+    extensionBehavior[E_GL_EXT_debug_printf]                            = EBhDisable;
 
     extensionBehavior[E_GL_EXT_shader_16bit_storage]                    = EBhDisable;
     extensionBehavior[E_GL_EXT_shader_8bit_storage]                     = EBhDisable;
@@ -338,7 +340,6 @@ void TParseVersions::getPreamble(std::string& preamble)
 
             // AEP
             "#define GL_ANDROID_extension_pack_es31a 1\n"
-            "#define GL_KHR_blend_equation_advanced 1\n"
             "#define GL_OES_sample_variables 1\n"
             "#define GL_OES_shader_image_atomic 1\n"
             "#define GL_OES_shader_multisample_interpolation 1\n"
@@ -394,6 +395,7 @@ void TParseVersions::getPreamble(std::string& preamble)
             "#define GL_ARB_shader_texture_image_samples 1\n"
             "#define GL_ARB_viewport_array 1\n"
             "#define GL_ARB_gpu_shader_int64 1\n"
+            "#define GL_ARB_gpu_shader_fp64 1\n"
             "#define GL_ARB_shader_ballot 1\n"
             "#define GL_ARB_sparse_texture2 1\n"
             "#define GL_ARB_sparse_texture_clamp 1\n"
@@ -417,6 +419,7 @@ void TParseVersions::getPreamble(std::string& preamble)
             "#define GL_EXT_buffer_reference2 1\n"
             "#define GL_EXT_buffer_reference_uvec2 1\n"
             "#define GL_EXT_demote_to_helper_invocation 1\n"
+            "#define GL_EXT_debug_printf 1\n"
 
             // GL_KHR_shader_subgroup
             "#define GL_KHR_shader_subgroup_basic 1\n"
@@ -505,6 +508,7 @@ void TParseVersions::getPreamble(std::string& preamble)
     preamble +=
             "#define GL_GOOGLE_cpp_style_line_directive 1\n"
             "#define GL_GOOGLE_include_directive 1\n"
+            "#define GL_KHR_blend_equation_advanced 1\n"
             ;
 #endif
 
@@ -925,8 +929,8 @@ void TParseVersions::fullIntegerCheck(const TSourceLoc& loc, const char* op)
 // Call for any operation needing GLSL double data-type support.
 void TParseVersions::doubleCheck(const TSourceLoc& loc, const char* op)
 {
-    requireProfile(loc, ECoreProfile | ECompatibilityProfile, op);
-    profileRequires(loc, ECoreProfile | ECompatibilityProfile, 400, nullptr, op);
+    //requireProfile(loc, ECoreProfile | ECompatibilityProfile, op);
+    profileRequires(loc, ECoreProfile | ECompatibilityProfile, 400, E_GL_ARB_gpu_shader_fp64, op);
 }
 
 // Call for any operation needing GLSL float16 data-type support.
