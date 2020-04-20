@@ -3523,7 +3523,8 @@ spv::Id TGlslangToSpvTraverser::convertGlslangToSpvType(const glslang::TType& ty
         spvType = builder.makeUintType(32);
         break;
     case glslang::EbtAccStructNV:
-        spvType = builder.makeAccelerationStructureNVType();
+        //spvType = builder.makeAccelerationStructureNVType();
+		spvType = builder.makeAccelerationStructureType();
         break;
     case glslang::EbtReference:
         {

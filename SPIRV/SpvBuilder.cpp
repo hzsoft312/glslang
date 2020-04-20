@@ -602,7 +602,8 @@ Id Builder::makeSampledImageType(Id imageType)
 }
 
 #ifndef GLSLANG_WEB
-Id Builder::makeAccelerationStructureNVType()
+//Id Builder::makeAccelerationStructureNVType()
+Id Builder::makeAccelerationStructureType()
 {
     Instruction *type;
     if (groupedTypes[OpTypeAccelerationStructureNV].size() == 0) {
